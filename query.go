@@ -9,20 +9,29 @@ import (
 	"gorm.io/gorm/schema"
 )
 
-/* */
+type cdx uint8
+
+const (
+	or cdx = iota + 1
+	and
+)
+
+type scopeWheredata struct {
+	wherestr string
+	val      []interface{}
+}
+
+type scopeWhereGroup struct {
+	combainCdx cdx
+	data       []scopeWheredata
+	sub        []scopeWhereGroup
+}
+
 func Where(i interface{}, count ...*int64) func(d *gorm.DB) *gorm.DB {
 	return func(d *gorm.DB) *gorm.DB {
 		nameFormat := d.Config.NamingStrategy
-		dataMap, order, page, limit := toScopeWhereMap(i, nameFormat)
-		for _, v := range order {
-			if data, ok := dataMap[v]; ok {
-				if mp, ok := data[0].(map[string][]interface{}); ok {
-					d = d.Scopes(subScopes(mp))
-				} else {
-					d = d.Where(v, dataMap[v]...)
-				}
-			}
-		}
+		dataMap, page, limit := toScopeWhereMap(i, nameFormat)
+		d.Scopes(dataMap.scopes())
 		if len(count) == 1 {
 			t := d.Session(&gorm.Session{})
 			t.Count(count[0])
@@ -34,31 +43,55 @@ func Where(i interface{}, count ...*int64) func(d *gorm.DB) *gorm.DB {
 	}
 }
 
-func subScopes(m map[string][]interface{}) func(d *gorm.DB) *gorm.DB {
+func (s *scopeWhereGroup) scopes() func(d *gorm.DB) *gorm.DB {
 	return func(d *gorm.DB) *gorm.DB {
-		t := d.Session(&gorm.Session{
-			NewDB: true,
-		})
-
-		set := false
-		for k, v := range m {
-			if mp, ok := v[0].(map[string][]interface{}); ok {
-				d = d.Scopes(subScopes(mp))
-			} else {
-				t = t.Or(k, v...)
-				set = true
+		switch s.combainCdx {
+		case and:
+			for _, v := range s.data {
+				d.Where(v.wherestr, v.val...)
 			}
-		}
-		if set {
-			d = d.Where(t)
+			for _, v := range s.sub {
+				d.Where(v.scopesSub(d))
+			}
+		case or:
+			for _, v := range s.data {
+				d.Or(v.wherestr, v.val...)
+			}
+			for _, v := range s.sub {
+				d.Or(v.scopesSub(d))
+			}
 		}
 		return d
 	}
 }
 
-func toScopeWhereMap(i interface{}, nameFormat schema.Namer) (map[string][]interface{}, []string, int, int) {
-	ret := make(map[string][]interface{})
-	order := make([]string, 0)
+func (s *scopeWhereGroup) scopesSub(db *gorm.DB) *gorm.DB {
+	db = db.Session(&gorm.Session{
+		NewDB: true,
+	})
+	switch s.combainCdx {
+	case and:
+		for _, v := range s.data {
+			db = db.Where(v.wherestr, v.val...)
+		}
+		for _, v := range s.sub {
+			db = db.Where(v.scopesSub(db))
+		}
+	case or:
+		for _, v := range s.data {
+			db = db.Or(v.wherestr, v.val...)
+		}
+		for _, v := range s.sub {
+			db = db.Or(v.scopesSub(db))
+		}
+	}
+	return db
+}
+
+func toScopeWhereMap(i interface{}, nameFormat schema.Namer) (scopeWhereGroup, int, int) {
+	ret := scopeWhereGroup{
+		combainCdx: and,
+	}
 	var page int
 	var limit int
 	refv := reflect.ValueOf(i)
@@ -78,21 +111,11 @@ func toScopeWhereMap(i interface{}, nameFormat schema.Namer) (map[string][]inter
 			continue
 		}
 		if fieldValue.Kind() == reflect.Struct {
+			m, _, _ := toScopeWhereMap(fieldValue.Interface(), nameFormat)
 			if fieldType.Anonymous {
-				m, _, p, lm := toScopeWhereMap(fieldValue.Interface(), nameFormat)
-				for k, v := range m {
-					ret[k] = v
-				}
-
-				if p == 0 || lm == 0 {
-					ret[fieldType.Name] = append(ret[fieldType.Name], m)
-					order = append(order, fieldType.Name)
-				}
-			} else {
-				m, _, _, _ := toScopeWhereMap(fieldValue.Interface(), nameFormat)
-				ret[fieldType.Name] = append(ret[fieldType.Name], m)
-				order = append(order, fieldType.Name)
+				m.combainCdx = or
 			}
+			ret.sub = append(ret.sub, m)
 			continue
 		}
 		field := refv.Type().Field(i)
@@ -135,31 +158,39 @@ func toScopeWhereMap(i interface{}, nameFormat schema.Namer) (map[string][]inter
 			}
 		}
 		whereStr, count := paresWhere(fieldName, fieldTag)
+		val := make([]interface{}, 0)
 		for i := 0; i < count; i++ {
-			//between 需要将数组拆开
+			//between 需要将切片拆开
 			switch {
 			case strings.Contains(fieldTag, "between"):
 				if fieldValue.Kind() == reflect.Slice && fieldValue.Len() == 2 {
-					ret[whereStr] = append(ret[whereStr], fieldValue.Index(0).Interface(), fieldValue.Index(1).Interface())
+					val = append(val, fieldValue.Index(0).Interface(), fieldValue.Index(1).Interface())
 				}
 			//like
 			case fieldTag == "like":
-				ret[whereStr] = append(ret[whereStr], "%"+fmt.Sprint(fieldValue.Interface())+"%")
+				str := fmt.Sprint(fieldValue.Interface())
+				if (!strings.Contains(str, "%")) || (strings.Contains(str, "%") && strings.Count(str, "%") == strings.Count(str, `\%`)) {
+					str = "%" + str + "%"
+				}
+				val = append(val, str)
 			default:
-				ret[whereStr] = append(ret[whereStr], fieldValue.Interface())
+				val = append(val, fieldValue.Interface())
 			}
 		}
-		order = append(order, whereStr)
+		ret.data = append(ret.data, scopeWheredata{
+			wherestr: whereStr,
+			val:      val,
+		})
 	}
-	return ret, order, page, limit
+	return ret, page, limit
 }
 
 func symbolToText(symbol rune) string {
 	switch symbol {
 	case '&':
-		return " and "
+		return " AND "
 	case '|':
-		return " or "
+		return " OR "
 	}
 	return ""
 }
@@ -185,13 +216,13 @@ func paresWhere(fieldName, fieldTag string) (whereStr string, count int) {
 func parseWherefield(fieldName, fieldTag string) (wherestr string) {
 	switch fieldTag {
 	case "=", "!=", ">", "<", ">=", "<=", "like":
-		wherestr = fieldName + " " + fieldTag + " ?"
+		wherestr = fieldName + " " + strings.ToUpper(fieldTag) + " ?"
 		return
 	case "in", "not in":
-		wherestr = fieldName + " " + fieldTag + " (?)"
+		wherestr = fieldName + " " + strings.ToUpper(fieldTag) + " (?)"
 		return
 	case "between", "not between":
-		wherestr = fieldName + " " + fieldTag + " ? and ?"
+		wherestr = fieldName + " " + strings.ToUpper(fieldTag) + " ? AND ?"
 		return
 	}
 	if strings.Contains(fieldTag, "?") {
@@ -206,6 +237,11 @@ var includeType = []reflect.Kind{
 	reflect.Int16,
 	reflect.Int32,
 	reflect.Int64,
+	reflect.Uint,
+	reflect.Uint8,
+	reflect.Uint16,
+	reflect.Uint32,
+	reflect.Uint64,
 }
 
 func checkInt(f reflect.StructField) bool {
