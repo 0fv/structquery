@@ -87,7 +87,7 @@ DB.Scopes(structquery.Where(u)).Find(&user)
 
 1. op
 
-op 表示操作符 不写默认等号 = 可选值：=,!=,>,<,>=,<=,like,in,not in,between,not between 或者含问号符号的
+op 表示操作符 不写默认等号 = 可选值：=,!=,>,<,>=,<=,like,in,not in,between,not between,null 或者含问号符号的
 
 ```go
 type UserWhere struct {
@@ -182,18 +182,44 @@ type UserWhere7 struct {
 	Name   string
 	Age    int `op:"-"`
 	Father *string
+	Status *int
 }
+var i int = 0
 u8 := UserWhere7{
 	Name:   "",
 	Age:    12,
 	Father: nil,
+	Status: &i
 }
 
 var user []User
-//SELECT * FROM `user
+//SELECT * FROM `user where status = 0
 DB.Scopes(structquery.Where(u8)).Find(&user)
 
 ```
+
+当需要查询零值时，可以将字段类型改成对应的指针类型，当需要查询是否为空时，可以将op tag设置为null,字段类型为bool或*bool类型：
+```go
+type UserWhere8 struct {
+	DeletedAt bool `op:"null"` //为true时查询 IS NULL 为false时跳过条件
+	Status    *int
+	CreatedAt *bool `op:"null"` //为true时查询 IS NULL，为false时查询 IS NOT NULL
+}
+var status int
+var created bool
+u9 := UserWhere8{
+	DeletedAt: true,
+	Status:    &status,
+	CreatedAt: &created,
+}
+
+var user []User
+//SELECT * FROM `user` WHERE deleted_at IS NULL AND status = 0 AND created_at IS NOT NULL
+DB.Scopes(structquery.Where(u9)).Find(&user)
+```
+
+
+
 2. field
 
 field 字段名称，可配置多个字段名称，字段名称之间用&分割时，字段名称之间的关系为and 用|分割时，表示or

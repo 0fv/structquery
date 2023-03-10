@@ -30,7 +30,8 @@ type scopeWhereGroup struct {
 func Where(i interface{}, count ...*int64) func(d *gorm.DB) *gorm.DB {
 	return func(d *gorm.DB) *gorm.DB {
 		nameFormat := d.Config.NamingStrategy
-		dataMap, page, limit := toScopeWhereMap(i, nameFormat)
+		dialector := d.Dialector
+		dataMap, page, limit := toScopeWhereMap(i, nameFormat, dialector)
 		d.Scopes(dataMap.scopes())
 		if len(count) == 1 {
 			t := d.Session(&gorm.Session{})
@@ -88,7 +89,7 @@ func (s *scopeWhereGroup) scopesSub(db *gorm.DB) *gorm.DB {
 	return db
 }
 
-func toScopeWhereMap(i interface{}, nameFormat schema.Namer) (scopeWhereGroup, int, int) {
+func toScopeWhereMap(i interface{}, nameFormat schema.Namer, dialector gorm.Dialector) (scopeWhereGroup, int, int) {
 	ret := scopeWhereGroup{
 		combainCdx: and,
 	}
@@ -110,8 +111,11 @@ func toScopeWhereMap(i interface{}, nameFormat schema.Namer) (scopeWhereGroup, i
 			(fieldValue.Kind() == reflect.Slice && fieldValue.Len() == 0) {
 			continue
 		}
+		if fieldValue.Kind() == reflect.Ptr {
+			fieldValue = fieldValue.Elem()
+		}
 		if fieldValue.Kind() == reflect.Struct {
-			m, _, _ := toScopeWhereMap(fieldValue.Interface(), nameFormat)
+			m, _, _ := toScopeWhereMap(fieldValue.Interface(), nameFormat, dialector)
 			if fieldType.Anonymous {
 				m.combainCdx = or
 			}
@@ -157,7 +161,7 @@ func toScopeWhereMap(i interface{}, nameFormat schema.Namer) (scopeWhereGroup, i
 				fieldName = v
 			}
 		}
-		whereStr, count := paresWhere(fieldName, fieldTag)
+		whereStr, count := paresWhere(fieldName, fieldTag, dialector)
 		val := make([]interface{}, 0)
 		for i := 0; i < count; i++ {
 			//between 需要将切片拆开
@@ -173,14 +177,23 @@ func toScopeWhereMap(i interface{}, nameFormat schema.Namer) (scopeWhereGroup, i
 					str = "%" + str + "%"
 				}
 				val = append(val, str)
+			//null check
+			case fieldTag == "null":
+				fv := fieldValue.Interface()
+				isnull, ok := fv.(bool)
+				if ok && (!isnull) {
+					whereStr = strings.ReplaceAll(whereStr, "IS NULL", "IS NOT NULL")
+				}
 			default:
 				val = append(val, fieldValue.Interface())
 			}
 		}
-		ret.data = append(ret.data, scopeWheredata{
-			wherestr: whereStr,
-			val:      val,
-		})
+		if whereStr != "" {
+			ret.data = append(ret.data, scopeWheredata{
+				wherestr: whereStr,
+				val:      val,
+			})
+		}
 	}
 	return ret, page, limit
 }
@@ -195,19 +208,26 @@ func symbolToText(symbol rune) string {
 	return ""
 }
 
-func paresWhere(fieldName, fieldTag string) (whereStr string, count int) {
+func paresWhere(fieldName, fieldTag string, dialector gorm.Dialector) (whereStr string, count int) {
 	count++
 	start := 0
 	privOp := ""
+	sb := &strings.Builder{}
 	for i, v := range fieldName {
 		if v == '&' || v == '|' {
 			count++
-			whereStr += (privOp + parseWherefield(fieldName[start:i], fieldTag))
+			dialector.QuoteTo(sb, fieldName[start:i])
+			fn := sb.String()
+			sb.Reset()
+			whereStr += (privOp + parseWherefield(fn, fieldTag))
 			start = i + 1
 			privOp = symbolToText(v)
 		}
 		if len(fieldName)-1 == i {
-			whereStr += (privOp + parseWherefield(fieldName[start:i+1], fieldTag))
+			dialector.QuoteTo(sb, fieldName[start:i+1])
+			fn := sb.String()
+			sb.Reset()
+			whereStr += (privOp + parseWherefield(fn, fieldTag))
 		}
 	}
 	return
@@ -217,16 +237,16 @@ func parseWherefield(fieldName, fieldTag string) (wherestr string) {
 	switch fieldTag {
 	case "=", "!=", ">", "<", ">=", "<=", "like":
 		wherestr = fieldName + " " + strings.ToUpper(fieldTag) + " ?"
-		return
 	case "in", "not in":
 		wherestr = fieldName + " " + strings.ToUpper(fieldTag) + " (?)"
-		return
 	case "between", "not between":
 		wherestr = fieldName + " " + strings.ToUpper(fieldTag) + " ? AND ?"
-		return
-	}
-	if strings.Contains(fieldTag, "?") {
-		wherestr = fieldTag
+	case "null":
+		wherestr = fieldName + " IS " + strings.ToUpper(fieldTag)
+	default:
+		if strings.Contains(fieldTag, "?") {
+			wherestr = fieldTag
+		}
 	}
 	return
 }

@@ -48,7 +48,7 @@ func TestAnd(t *testing.T) {
 	}
 	assert.Equal(
 		t,
-		"SELECT * FROM `user` WHERE name = \"foo\" AND age = 12",
+		"SELECT * FROM `user` WHERE `name` = \"foo\" AND `age` = 12",
 		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
 			return tx.Scopes(Where(u)).Find(&User{})
 		}), "should be equal",
@@ -72,7 +72,7 @@ func TestOrType1(t *testing.T) {
 	}
 	assert.Equal(
 		t,
-		"SELECT * FROM `user` WHERE (name = \"foo\" OR age = 12)",
+		"SELECT * FROM `user` WHERE (`name` = \"foo\" OR `age` = 12)",
 		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
 			return tx.Scopes(Where(u)).Find(&User{})
 		}), "should be equal",
@@ -108,7 +108,7 @@ func TestOrType2(t *testing.T) {
 	}
 	assert.Equal(
 		t,
-		"SELECT * FROM `user` WHERE addr = \"bar\" AND (name = \"foo\" OR age = 12 OR (father = \"foo\" AND Mother = \"bar\"))",
+		"SELECT * FROM `user` WHERE `addr` = \"bar\" AND (`name` = \"foo\" OR `age` = 12 OR (`father` = \"foo\" AND `mother` = \"bar\"))",
 		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
 			return tx.Scopes(Where(u)).Find(&User{})
 		}), "should be equal",
@@ -126,7 +126,7 @@ func TestOp(t *testing.T) {
 	}
 	assert.Equal(
 		t,
-		"SELECT * FROM `user` WHERE name = \"foo\" AND age > 12",
+		"SELECT * FROM `user` WHERE `name` = \"foo\" AND `age` > 12",
 		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
 			return tx.Scopes(Where(u)).Find(&User{})
 		}), "should be equal",
@@ -140,7 +140,7 @@ func TestOp(t *testing.T) {
 	}
 	assert.Equal(
 		t,
-		"SELECT * FROM `user` WHERE name LIKE \"%tom%\"",
+		"SELECT * FROM `user` WHERE `name` LIKE \"%tom%\"",
 		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
 			return tx.Scopes(Where(u2)).Find(&User{})
 		}), "should be equal",
@@ -150,7 +150,7 @@ func TestOp(t *testing.T) {
 	}
 	assert.Equal(
 		t,
-		"SELECT * FROM `user` WHERE name LIKE \"tom%\"",
+		"SELECT * FROM `user` WHERE `name` LIKE \"tom%\"",
 		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
 			return tx.Scopes(Where(u3)).Find(&User{})
 		}), "should be equal",
@@ -163,7 +163,7 @@ func TestOp(t *testing.T) {
 	}
 	assert.Equal(
 		t,
-		"SELECT * FROM `user` WHERE id IN (1,2,3)",
+		"SELECT * FROM `user` WHERE `id` IN (1,2,3)",
 		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
 			return tx.Scopes(Where(u4)).Find(&User{})
 		}), "should be equal",
@@ -176,7 +176,7 @@ func TestOp(t *testing.T) {
 	}
 	assert.Equal(
 		t,
-		"SELECT * FROM `user` WHERE id NOT IN (1,2,3)",
+		"SELECT * FROM `user` WHERE `id` NOT IN (1,2,3)",
 		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
 			return tx.Scopes(Where(u5)).Find(&User{})
 		}), "should be equal",
@@ -205,7 +205,7 @@ func TestOp(t *testing.T) {
 	}
 	assert.Equal(
 		t,
-		"SELECT * FROM `user` WHERE birth BETWEEN \"2001-01-02 00:00:00\" AND \"2002-01-02 00:00:00\"",
+		"SELECT * FROM `user` WHERE `birth` BETWEEN \"2001-01-02 00:00:00\" AND \"2002-01-02 00:00:00\"",
 		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
 			return tx.Scopes(Where(u7)).Find(&User{})
 		}), "should be equal",
@@ -227,18 +227,38 @@ func TestOp(t *testing.T) {
 			return tx.Scopes(Where(u8)).Find(&User{})
 		}), "should be equal",
 	)
+
+	type UserWhere8 struct {
+		DeletedAt bool `op:"null"`
+		Status    *int
+		CreatedAt *bool `op:"null"`
+	}
+	var status int
+	var created bool
+	u9 := UserWhere8{
+		DeletedAt: true,
+		Status:    &status,
+		CreatedAt: &created,
+	}
+	assert.Equal(
+		t,
+		"SELECT * FROM `user` WHERE `deleted_at` IS NULL AND `status` = 0 AND `created_at` IS NOT NULL",
+		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
+			return tx.Scopes(Where(u9)).Find(&User{})
+		}), "should be equal",
+	)
 }
 
 func TestField(t *testing.T) {
 	type UserWhere1 struct {
-		Name string `op:"like" field:"name|father&Mother"`
+		Name string `op:"like" field:"name|father&mother"`
 	}
 	u1 := UserWhere1{
 		Name: "tommy",
 	}
 	assert.Equal(
 		t,
-		"SELECT * FROM `user` WHER1E name LIKE \"%tommy%\" OR father LIKE \"%tommy%\" AND Mother LIKE \"%tommy%\"",
+		"SELECT * FROM `user` WHERE `name` LIKE \"%tommy%\" OR `father` LIKE \"%tommy%\" AND `mother` LIKE \"%tommy%\"",
 		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
 			return tx.Scopes(Where(u1)).Find(&User{})
 		}), "should be equal",
