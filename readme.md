@@ -87,7 +87,7 @@ DB.Scopes(structquery.Where(u)).Find(&user)
 
 1. op
 
-op 表示操作符 不写默认等号 = 可选值：=,!=,>,<,>=,<=,like,in,not in,between,not between,null 或者含问号符号的
+op 表示操作符 不写默认等号 = 可选值：=,!=,>,<,>=,<=,like,in,not in,between,not between,null,not null,asc,desc 或者含问号符号的
 
 ```go
 type UserWhere struct {
@@ -204,6 +204,8 @@ type UserWhere8 struct {
 	DeletedAt bool `op:"null"` //为true时查询 IS NULL 为false时跳过条件
 	Status    *int
 	CreatedAt *bool `op:"null"` //为true时查询 IS NULL，为false时查询 IS NOT NULL
+	UpdatedAt bool  `op:"not null"`
+
 }
 var status int
 var created bool
@@ -211,11 +213,52 @@ u9 := UserWhere8{
 	DeletedAt: true,
 	Status:    &status,
 	CreatedAt: &created,
+	UpdatedAt: true,
 }
 
 var user []User
-//SELECT * FROM `user` WHERE deleted_at IS NULL AND status = 0 AND created_at IS NOT NULL
+//SELECT * FROM `user` WHERE deleted_at IS NULL AND status = 0 AND created_at IS NOT NULL and updated_at is not null
 DB.Scopes(structquery.Where(u9)).Find(&user)
+```
+
+分页使用tag page 和 size：
+
+```go
+type UserWhere1 struct {
+	Page int `op:"page"`
+	Size int `op:"size"`
+}
+u1 := UserWhere1{
+	Page: 2,
+	Size: 10,
+}
+var user []User
+
+
+//SELECT * FROM `user` LIMIT 10 OFFSET 10
+DB.Scopes(structquery.Where(u1)).Find(&user)
+```
+
+排序可使用tag asc 和 desc
+
+```go
+type UserOrder struct {
+	NameOrder bool  `op:"asc" field:"name"`
+	Age       bool  `op:"desc"`
+	Birth     *bool `op:"asc"`
+	Names     bool  `op:"desc" field:"father,mother"`
+}
+u1 := UserOrder{
+	NameOrder: true,
+	Age:       true,
+	Birth:     &b,
+	Names:     true,
+}
+
+var user []User
+
+//SELECT * FROM `user` ORDER BY name ASC,age DESC,birth DESC,father DESC,mother DESC
+DB.Scopes(structquery.Where(u1)).Find(&user)
 ```
 
 
@@ -240,30 +283,12 @@ DB.Scopes(structquery.Where(u1)).Find(&user)
 
 ## 特殊字段
 
-当字段名为page或则size时，表示分页属性
-
-```go
-type UserWhere1 struct {
-	Page int
-	Size int
-}
-u1 := UserWhere1{
-	Page: 2,
-	Size: 10,
-}
-var user []User
-
-
-//SELECT * FROM `user` LIMIT 10 OFFSET 10
-DB.Scopes(structquery.Where(u1)).Find(&user)
-```
-
 可以用以下方法来获取总行数
 
 ```go
 type UserWhere1 struct {
-	Page int
-	Size int
+	Page int `op:"page"`
+	Size int `op:"size"`
 	Name string `op:"like" field:"name"`
 }
 u1 := UserWhere1{

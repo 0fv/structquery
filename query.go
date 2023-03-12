@@ -21,30 +21,31 @@ type scopeWheredata struct {
 	val      []interface{}
 }
 
-type scopeWhereGroup struct {
+type scopeCdxGroup struct {
 	combainCdx cdx
 	data       []scopeWheredata
-	sub        []scopeWhereGroup
+	sub        []scopeCdxGroup
+
+	orderField []string
+	page       int
+	size       int
 }
 
 func Where(i interface{}, count ...*int64) func(d *gorm.DB) *gorm.DB {
 	return func(d *gorm.DB) *gorm.DB {
 		nameFormat := d.Config.NamingStrategy
 		dialector := d.Dialector
-		dataMap, page, limit := toScopeWhereMap(i, nameFormat, dialector)
+		dataMap := toScopeWhereMap(i, nameFormat, dialector)
 		d.Scopes(dataMap.scopes())
 		if len(count) == 1 {
 			t := d.Session(&gorm.Session{})
 			t.Count(count[0])
 		}
-		if page > 0 && limit > 0 {
-			d.Limit(limit).Offset((page - 1) * limit)
-		}
 		return d
 	}
 }
 
-func (s *scopeWhereGroup) scopes() func(d *gorm.DB) *gorm.DB {
+func (s *scopeCdxGroup) scopes() func(d *gorm.DB) *gorm.DB {
 	return func(d *gorm.DB) *gorm.DB {
 		switch s.combainCdx {
 		case and:
@@ -62,11 +63,18 @@ func (s *scopeWhereGroup) scopes() func(d *gorm.DB) *gorm.DB {
 				d.Or(v.scopesSub(d))
 			}
 		}
+		d.Order(strings.Join(s.orderField, ","))
+		if s.size != 0 {
+			d.Limit(s.size)
+		}
+		if s.page != 0 {
+			d.Offset((s.page - 1) * s.size)
+		}
 		return d
 	}
 }
 
-func (s *scopeWhereGroup) scopesSub(db *gorm.DB) *gorm.DB {
+func (s *scopeCdxGroup) scopesSub(db *gorm.DB) *gorm.DB {
 	db = db.Session(&gorm.Session{
 		NewDB: true,
 	})
@@ -86,15 +94,21 @@ func (s *scopeWhereGroup) scopesSub(db *gorm.DB) *gorm.DB {
 			db = db.Or(v.scopesSub(db))
 		}
 	}
+	db = db.Order(strings.Join(s.orderField, ","))
+
+	if s.page != 0 {
+		db = db.Limit(s.page)
+	}
+	if s.size != 0 {
+		db = db.Offset((s.page - 1) * s.size)
+	}
 	return db
 }
 
-func toScopeWhereMap(i interface{}, nameFormat schema.Namer, dialector gorm.Dialector) (scopeWhereGroup, int, int) {
-	ret := scopeWhereGroup{
+func toScopeWhereMap(i interface{}, nameFormat schema.Namer, dialector gorm.Dialector) scopeCdxGroup {
+	ret := scopeCdxGroup{
 		combainCdx: and,
 	}
-	var page int
-	var limit int
 	refv := reflect.ValueOf(i)
 	reft := reflect.TypeOf(i)
 	if refv.Kind() == reflect.Ptr {
@@ -115,7 +129,7 @@ func toScopeWhereMap(i interface{}, nameFormat schema.Namer, dialector gorm.Dial
 			fieldValue = fieldValue.Elem()
 		}
 		if fieldValue.Kind() == reflect.Struct {
-			m, _, _ := toScopeWhereMap(fieldValue.Interface(), nameFormat, dialector)
+			m := toScopeWhereMap(fieldValue.Interface(), nameFormat, dialector)
 			if fieldType.Anonymous {
 				m.combainCdx = or
 			}
@@ -124,21 +138,6 @@ func toScopeWhereMap(i interface{}, nameFormat schema.Namer, dialector gorm.Dial
 		}
 		field := refv.Type().Field(i)
 		fieldName := nameFormat.ColumnName("", field.Name)
-		//分页
-		if fieldName == "page" {
-			isNum := checkInt(field)
-			if isNum {
-				page = int(fieldValue.Int())
-				continue
-			}
-		}
-		if fieldName == "size" {
-			isNum := checkInt(field)
-			if isNum {
-				limit = int(fieldValue.Int())
-				continue
-			}
-		}
 		fieldTag := "="
 		if fieldValue.Kind() == reflect.Slice {
 			n := fieldValue.Type().Elem().Name()
@@ -161,41 +160,77 @@ func toScopeWhereMap(i interface{}, nameFormat schema.Namer, dialector gorm.Dial
 				fieldName = v
 			}
 		}
-		whereStr, count := paresWhere(fieldName, fieldTag, dialector)
-		val := make([]interface{}, 0)
-		for i := 0; i < count; i++ {
-			//between 需要将切片拆开
-			switch {
-			case strings.Contains(fieldTag, "between"):
-				if fieldValue.Kind() == reflect.Slice && fieldValue.Len() == 2 {
-					val = append(val, fieldValue.Index(0).Interface(), fieldValue.Index(1).Interface())
+		switch fieldTag {
+		case "page":
+			if checkInt(field) {
+				ret.page = int(fieldValue.Int())
+			}
+			if checkUint(field) {
+				ret.page = int(fieldValue.Uint())
+			}
+		case "size":
+			if checkInt(field) {
+				ret.size = int(fieldValue.Int())
+			}
+			if checkUint(field) {
+				ret.size = int(fieldValue.Uint())
+			}
+		case "asc":
+			fv := fieldValue.Interface()
+			asc, ok := fv.(bool)
+			if ok {
+				ret.orderField = append(ret.orderField, parseOrderField(fieldName, dialector, asc)...)
+			}
+		case "desc":
+			fv := fieldValue.Interface()
+			desc, ok := fv.(bool)
+			if ok {
+				ret.orderField = append(ret.orderField, parseOrderField(fieldName, dialector, !desc)...)
+			}
+		default:
+			whereStr, count := paresWhere(fieldName, fieldTag, dialector)
+			val := make([]interface{}, 0)
+			for i := 0; i < count; i++ {
+				//between 需要将切片拆开
+				switch fieldTag {
+				case "between", "not between":
+					if fieldValue.Kind() == reflect.Slice && fieldValue.Len() == 2 {
+						val = append(val, fieldValue.Index(0).Interface(), fieldValue.Index(1).Interface())
+					}
+				//like
+				case "like":
+					str := fmt.Sprint(fieldValue.Interface())
+					if (!strings.Contains(str, "%")) || (strings.Contains(str, "%") && strings.Count(str, "%") == strings.Count(str, `\%`)) {
+						str = "%" + str + "%"
+					}
+					val = append(val, str)
+				case "null":
+					fv := fieldValue.Interface()
+					isnull, ok := fv.(bool)
+					if ok && (!isnull) {
+						whereStr = strings.ReplaceAll(whereStr, "IS NULL", "IS NOT NULL")
+					}
+				case "not null":
+					fv := fieldValue.Interface()
+					notnull, ok := fv.(bool)
+					if ok && (!notnull) {
+						whereStr = strings.ReplaceAll(whereStr, "IS NOT NULL", "IS NULL")
+					}
+
+				default:
+					val = append(val, fieldValue.Interface())
 				}
-			//like
-			case fieldTag == "like":
-				str := fmt.Sprint(fieldValue.Interface())
-				if (!strings.Contains(str, "%")) || (strings.Contains(str, "%") && strings.Count(str, "%") == strings.Count(str, `\%`)) {
-					str = "%" + str + "%"
-				}
-				val = append(val, str)
-			//null check
-			case fieldTag == "null":
-				fv := fieldValue.Interface()
-				isnull, ok := fv.(bool)
-				if ok && (!isnull) {
-					whereStr = strings.ReplaceAll(whereStr, "IS NULL", "IS NOT NULL")
-				}
-			default:
-				val = append(val, fieldValue.Interface())
+			}
+			if whereStr != "" {
+				ret.data = append(ret.data, scopeWheredata{
+					wherestr: whereStr,
+					val:      val,
+				})
 			}
 		}
-		if whereStr != "" {
-			ret.data = append(ret.data, scopeWheredata{
-				wherestr: whereStr,
-				val:      val,
-			})
-		}
+
 	}
-	return ret, page, limit
+	return ret
 }
 
 func symbolToText(symbol rune) string {
@@ -206,6 +241,22 @@ func symbolToText(symbol rune) string {
 		return " OR "
 	}
 	return ""
+}
+
+func parseOrderField(fieldName string, dialector gorm.Dialector, asc bool) []string {
+	sb := &strings.Builder{}
+	orderway := " DESC"
+	if asc {
+		orderway = " ASC"
+	}
+	var ret []string
+	for _, v := range strings.Split(fieldName, ",") {
+		dialector.QuoteTo(sb, v)
+		sb.WriteString(orderway)
+		ret = append(ret, sb.String())
+		sb.Reset()
+	}
+	return ret
 }
 
 func paresWhere(fieldName, fieldTag string, dialector gorm.Dialector) (whereStr string, count int) {
@@ -241,7 +292,7 @@ func parseWherefield(fieldName, fieldTag string) (wherestr string) {
 		wherestr = fieldName + " " + strings.ToUpper(fieldTag) + " (?)"
 	case "between", "not between":
 		wherestr = fieldName + " " + strings.ToUpper(fieldTag) + " ? AND ?"
-	case "null":
+	case "null", "not null":
 		wherestr = fieldName + " IS " + strings.ToUpper(fieldTag)
 	default:
 		if strings.Contains(fieldTag, "?") {
@@ -251,12 +302,15 @@ func parseWherefield(fieldName, fieldTag string) (wherestr string) {
 	return
 }
 
-var includeType = []reflect.Kind{
+var includeIntType = []reflect.Kind{
 	reflect.Int,
 	reflect.Int8,
 	reflect.Int16,
 	reflect.Int32,
 	reflect.Int64,
+}
+
+var includeUintType = []reflect.Kind{
 	reflect.Uint,
 	reflect.Uint8,
 	reflect.Uint16,
@@ -265,8 +319,16 @@ var includeType = []reflect.Kind{
 }
 
 func checkInt(f reflect.StructField) bool {
+	for _, v := range includeIntType {
+		if f.Type.Kind() == v {
+			return true
+		}
+	}
+	return false
+}
 
-	for _, v := range includeType {
+func checkUint(f reflect.StructField) bool {
+	for _, v := range includeUintType {
 		if f.Type.Kind() == v {
 			return true
 		}

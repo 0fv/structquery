@@ -232,6 +232,7 @@ func TestOp(t *testing.T) {
 		DeletedAt bool `op:"null"`
 		Status    *int
 		CreatedAt *bool `op:"null"`
+		UpdatedAt bool  `op:"not null"`
 	}
 	var status int
 	var created bool
@@ -239,10 +240,11 @@ func TestOp(t *testing.T) {
 		DeletedAt: true,
 		Status:    &status,
 		CreatedAt: &created,
+		UpdatedAt: true,
 	}
 	assert.Equal(
 		t,
-		"SELECT * FROM `user` WHERE `deleted_at` IS NULL AND `status` = 0 AND `created_at` IS NOT NULL",
+		"SELECT * FROM `user` WHERE `deleted_at` IS NULL AND `status` = 0 AND `created_at` IS NOT NULL AND `updated_at` IS NOT NULL",
 		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
 			return tx.Scopes(Where(u9)).Find(&User{})
 		}), "should be equal",
@@ -267,8 +269,8 @@ func TestField(t *testing.T) {
 
 func TestPageSize(t *testing.T) {
 	type UserWhere1 struct {
-		Page int
-		Size int
+		Page int `op:"page"`
+		Size int `op:"size"`
 	}
 	u1 := UserWhere1{
 		Page: 2,
@@ -283,10 +285,34 @@ func TestPageSize(t *testing.T) {
 	)
 }
 
+func TestOrder(t *testing.T) {
+	var b bool
+	type UserOrder struct {
+		NameOrder bool  `op:"asc" field:"name"`
+		Age       bool  `op:"desc"`
+		Birth     *bool `op:"asc"`
+		Names     bool  `op:"desc" field:"father,mother"`
+	}
+	u1 := UserOrder{
+		NameOrder: true,
+		Age:       true,
+		Birth:     &b,
+		Names:     true,
+	}
+	assert.Equal(
+		t,
+		"SELECT * FROM `user` ORDER BY `name` ASC,`age` DESC,`birth` DESC,`father` DESC,`mother` DESC",
+		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
+			return tx.Scopes(Where(u1)).Find(&User{})
+		}), "should be equal",
+	)
+
+}
+
 func TestCount(t *testing.T) {
 	type UserWhere1 struct {
-		Page int
-		Size int
+		Page int    `op:"page"`
+		Size int    `op:"size"`
 		Name string `op:"like" field:"name"`
 	}
 	u1 := UserWhere1{
