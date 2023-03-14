@@ -279,6 +279,14 @@ u1 := UserWhere1{
 var user []User
 //SELECT * FROM `user` WHER1E name LIKE "%tommy%" OR father LIKE "%tommy%" AND Mother LIKE "%tommy%"
 DB.Scopes(structquery.Where(u1)).Find(&user)
+type UserWhere2 struct {
+	Name string `op:"like" field:"name&(father|mother)"`
+}
+u2 := UserWhere2{
+	Name: "tommy",
+}
+//SELECT * FROM `user` WHERE `name` LIKE "%tommy%" AND (`father` LIKE "%tommy%" OR `mother` LIKE "%tommy%")
+DB.Scopes(structquery.Where(u2)).Find(&user)
 ```
 
 ## 特殊字段

@@ -263,24 +263,50 @@ func paresWhere(fieldName, fieldTag string, dialector gorm.Dialector) (whereStr 
 	count++
 	start := 0
 	privOp := ""
+	leftstr := ""
+	rightstr := ""
 	sb := &strings.Builder{}
 	for i, v := range fieldName {
 		if v == '&' || v == '|' {
 			count++
-			dialector.QuoteTo(sb, fieldName[start:i])
+			fnstr := fieldName[start:i]
+			leftstr, rightstr, fnstr = splitBrackets(fnstr)
+			dialector.QuoteTo(sb, fnstr)
 			fn := sb.String()
 			sb.Reset()
-			whereStr += (privOp + parseWherefield(fn, fieldTag))
+			whereStr += privOp + leftstr + parseWherefield(fn, fieldTag) + rightstr
 			start = i + 1
 			privOp = symbolToText(v)
+			leftstr = ""
+			rightstr = ""
 		}
 		if len(fieldName)-1 == i {
-			dialector.QuoteTo(sb, fieldName[start:i+1])
+			fnstr := fieldName[start : i+1]
+			leftstr, rightstr, fnstr = splitBrackets(fnstr)
+			dialector.QuoteTo(sb, fnstr)
 			fn := sb.String()
 			sb.Reset()
-			whereStr += (privOp + parseWherefield(fn, fieldTag))
+			whereStr += (privOp + leftstr + parseWherefield(fn, fieldTag)) + rightstr
 		}
 	}
+	return
+}
+
+func splitBrackets(str string) (left, right, center string) {
+	str = strings.TrimLeftFunc(str, func(r rune) bool {
+		if r == '(' {
+			left += "("
+			return true
+		}
+		return false
+	})
+	center = strings.TrimRightFunc(str, func(r rune) bool {
+		if r == ')' {
+			right += ")"
+			return true
+		}
+		return false
+	})
 	return
 }
 

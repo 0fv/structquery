@@ -265,6 +265,19 @@ func TestField(t *testing.T) {
 			return tx.Scopes(Where(u1)).Find(&User{})
 		}), "should be equal",
 	)
+	type UserWhere2 struct {
+		Name string `op:"like" field:"name&(father|mother)"`
+	}
+	u2 := UserWhere2{
+		Name: "tommy",
+	}
+	assert.Equal(
+		t,
+		"SELECT * FROM `user` WHERE `name` LIKE \"%tommy%\" AND (`father` LIKE \"%tommy%\" OR `mother` LIKE \"%tommy%\")",
+		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
+			return tx.Scopes(Where(u2)).Find(&User{})
+		}), "should be equal",
+	)
 }
 
 func TestPageSize(t *testing.T) {
