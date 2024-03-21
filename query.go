@@ -23,8 +23,8 @@ type scopeWheredata struct {
 
 type scopeCdxGroup struct {
 	combainCdx cdx
-	data       []scopeWheredata
-	sub        []scopeCdxGroup
+	data       []*scopeWheredata
+	sub        []*scopeCdxGroup
 
 	orderField []string
 	page       int
@@ -53,14 +53,14 @@ func (s *scopeCdxGroup) scopes() func(d *gorm.DB) *gorm.DB {
 				d.Where(v.wherestr, v.val...)
 			}
 			for _, v := range s.sub {
-				d.Where(v.scopesSub(d))
+				d.Where(v.scopesSub(d, s))
 			}
 		case or:
 			for _, v := range s.data {
 				d.Or(v.wherestr, v.val...)
 			}
 			for _, v := range s.sub {
-				d.Or(v.scopesSub(d))
+				d.Or(v.scopesSub(d, s))
 			}
 		}
 		d.Order(strings.Join(s.orderField, ","))
@@ -74,7 +74,7 @@ func (s *scopeCdxGroup) scopes() func(d *gorm.DB) *gorm.DB {
 	}
 }
 
-func (s *scopeCdxGroup) scopesSub(db *gorm.DB) *gorm.DB {
+func (s *scopeCdxGroup) scopesSub(db *gorm.DB, p *scopeCdxGroup) *gorm.DB {
 	db = db.Session(&gorm.Session{
 		NewDB: true,
 	})
@@ -84,29 +84,31 @@ func (s *scopeCdxGroup) scopesSub(db *gorm.DB) *gorm.DB {
 			db = db.Where(v.wherestr, v.val...)
 		}
 		for _, v := range s.sub {
-			db = db.Where(v.scopesSub(db))
+			db = db.Where(v.scopesSub(db, v))
 		}
 	case or:
 		for _, v := range s.data {
 			db = db.Or(v.wherestr, v.val...)
 		}
 		for _, v := range s.sub {
-			db = db.Or(v.scopesSub(db))
+			db = db.Or(v.scopesSub(db, v))
 		}
 	}
-	db = db.Order(strings.Join(s.orderField, ","))
-
-	if s.page != 0 {
-		db = db.Limit(s.page)
+	if len(s.orderField) != 0 {
+		p.orderField = append(p.orderField, s.orderField...)
 	}
-	if s.size != 0 {
-		db = db.Offset((s.page - 1) * s.size)
+
+	if p.size == 0 && s.size != 0 {
+		p.size = s.size
+	}
+	if p.page == 0 && s.page != 0 {
+		p.page = s.page
 	}
 	return db
 }
 
-func toScopeWhereMap(i interface{}, nameFormat schema.Namer, dialector gorm.Dialector) scopeCdxGroup {
-	ret := scopeCdxGroup{
+func toScopeWhereMap(i interface{}, nameFormat schema.Namer, dialector gorm.Dialector) *scopeCdxGroup {
+	ret := &scopeCdxGroup{
 		combainCdx: and,
 	}
 	refv := reflect.ValueOf(i)
@@ -222,7 +224,7 @@ func toScopeWhereMap(i interface{}, nameFormat schema.Namer, dialector gorm.Dial
 				}
 			}
 			if whereStr != "" {
-				ret.data = append(ret.data, scopeWheredata{
+				ret.data = append(ret.data, &scopeWheredata{
 					wherestr: whereStr,
 					val:      val,
 				})

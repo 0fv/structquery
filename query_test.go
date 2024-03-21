@@ -37,6 +37,17 @@ type User struct {
 	Mother string
 }
 
+func TestAll(t *testing.T){
+	TestAnd(t)
+	TestOrType1(t)
+	TestOrType2(t)
+	TestOp(t)
+	TestField(t)
+	TestPageSize(t)
+	TestOrder(t)
+	TestCount(t)
+}
+
 func TestAnd(t *testing.T) {
 	type UserWhere struct {
 		Name string
@@ -294,6 +305,22 @@ func TestPageSize(t *testing.T) {
 		"SELECT * FROM `user` LIMIT 10 OFFSET 10",
 		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
 			return tx.Scopes(Where(u1)).Find(&User{})
+		}), "should be equal",
+	)
+	type UserWhere2 struct {
+		UserWhere1
+	}
+	u2 := UserWhere2{
+		UserWhere1: UserWhere1{
+			Page: 2,
+			Size: 10,
+		},
+	}
+	assert.Equal(
+		t,
+		"SELECT * FROM `user` LIMIT 10 OFFSET 10",
+		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
+			return tx.Scopes(Where(u2)).Find(&User{})
 		}), "should be equal",
 	)
 }
