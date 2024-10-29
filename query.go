@@ -41,6 +41,12 @@ func Where(i interface{}, count ...*int64) func(d *gorm.DB) *gorm.DB {
 			t := d.Session(&gorm.Session{})
 			t.Count(count[0])
 		}
+		if dataMap.size != 0 {
+			d.Limit(dataMap.size)
+		}
+		if dataMap.page != 0 {
+			d.Offset((dataMap.page - 1) * dataMap.size)
+		}
 		return d
 	}
 }
@@ -64,12 +70,6 @@ func (s *scopeCdxGroup) scopes() func(d *gorm.DB) *gorm.DB {
 			}
 		}
 		d.Order(strings.Join(s.orderField, ","))
-		if s.size != 0 {
-			d.Limit(s.size)
-		}
-		if s.page != 0 {
-			d.Offset((s.page - 1) * s.size)
-		}
 		return d
 	}
 }

@@ -37,7 +37,7 @@ type User struct {
 	Mother string
 }
 
-func TestAll(t *testing.T){
+func TestAll(t *testing.T) {
 	TestAnd(t)
 	TestOrType1(t)
 	TestOrType2(t)
@@ -316,11 +316,12 @@ func TestPageSize(t *testing.T) {
 			Size: 10,
 		},
 	}
+	var count int64
 	assert.Equal(
 		t,
 		"SELECT * FROM `user` LIMIT 10 OFFSET 10",
 		DB.ToSQL(func(tx *gorm.DB) *gorm.DB {
-			return tx.Scopes(Where(u2)).Find(&User{})
+			return tx.Scopes(Where(u2, &count)).Find(&User{})
 		}), "should be equal",
 	)
 }
